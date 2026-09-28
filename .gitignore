@@ -1,0 +1,23 @@
+# Ambientes virtuais
+venv/
+.venv/
+env/
+pyvenv.cfg
+
+# Configurações e segredos
+.env
+
+# Bytecodes e caches Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# IDEs
+.vscode/
+.idea/
+
+# Sistema
+.DS_Store
+Thumbs.db
