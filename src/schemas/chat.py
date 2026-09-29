@@ -7,11 +7,22 @@ class ChatMessage(BaseModel):
     content: str = Field(description="Conteúdo da mensagem")
 
 
+class QueryPlan(BaseModel):
+    intent: str = Field(description="Intenção principal identificada do usuário (ex: cancelamento, contratação, suporte técnico)")
+    clarified_query: str = Field(description="Pergunta reescrita e clarificada para busca vetorial na base de conhecimento")
+    entities: list[str] = Field(default_factory=list, description="Entidades e produtos identificados (ex: Fibra 500 Mega, Fatura)")
+    keywords: list[str] = Field(default_factory=list, description="Palavras-chave semânticas relevantes para recuperação")
+
+
 class ChatRequest(BaseModel):
     question: str = Field(description="Pergunta do usuário")
     filters: Optional[dict[str, Any]] = Field(
         default=None,
         description="Filtros customizados de metadados opcionais (ex: {'product': 'teletech_plans', 'plan': 'all'})",
+    )
+    history: Optional[list[ChatMessage]] = Field(
+        default=None,
+        description="Histórico recente da conversa para resolução de contexto e anáforas",
     )
 
     @model_validator(mode="before")
@@ -55,9 +66,11 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[RetrievedChunk]
     latency_ms: float
+    query_plan: Optional[QueryPlan] = None
 
 
 class SearchResponse(BaseModel):
     question: str
     results: list[RetrievedChunk]
     total: int
+

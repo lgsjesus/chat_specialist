@@ -111,7 +111,7 @@ Extensão pgvector ativada com sucesso ou já existente!
 Inicie o servidor Uvicorn com hot-reload habilitado:
 
 ```powershell
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+python .\src\server.py 
 ```
 
 - **Documentação Interativa (Swagger)**: [http://localhost:8000/docs](http://localhost:8000/docs)
@@ -264,13 +264,20 @@ curl -X POST "http://localhost:8000/api/v1/chat" \
       "score": 0.1842
     }
   ],
-  "latency_ms": 1150.32
+  "latency_ms": 1150.32,
+  "query_plan": {
+    "intent": "Contratação e benefícios do combo Multi",
+    "clarified_query": "benefícios e funcionamento da contratação do combo Multi TeleTech",
+    "entities": ["combo Multi TeleTech", "fibra óptica", "móvel 5G"],
+    "keywords": ["combo", "benefícios", "contratação"]
+  }
 }
 ```
 
 ---
 
 ### 5. Testar Streaming de Resposta (SSE - Server-Sent Events)
+
 
 Receba os tokens de resposta em tempo real via streaming com o mesmo formato de payload simplificado:
 

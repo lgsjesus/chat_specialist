@@ -8,6 +8,7 @@ from src.schemas.chat import (
     SearchRequest,
     SearchResponse,
 )
+from src.services.query_planner import query_planner
 from src.services.rag_service import rag_service
 
 router = APIRouter(prefix="/chat", tags=["Chat & RAG"])
@@ -15,10 +16,11 @@ router = APIRouter(prefix="/chat", tags=["Chat & RAG"])
 
 @router.post("", response_model=ChatResponse, status_code=status.HTTP_200_OK)
 async def chat(request: ChatRequest):
-    """Executa consulta RAG: busca vetorial com filtros opcionais, injeção de contexto em LCEL e inferência LLM."""
+    """Executa consulta RAG com QueryPlanner: clarificação de intenção via IA, busca vetorial e síntese LLM."""
     try:
-        response = await rag_service.answer_query(
-            query=request.question,
+        response = await query_planner.answer_query(
+            question=request.question,
+            history=request.history,
             custom_filter=request.filters,
         )
         return response
@@ -31,13 +33,20 @@ async def chat(request: ChatRequest):
 
 @router.post("/stream")
 async def chat_stream(request: ChatRequest):
-    """Endpoint de streaming (SSE) para respostas em tempo real token a token via LCEL."""
+    """Endpoint de streaming (SSE): clarificação de intenção via QueryPlanner e respostas token a token."""
     try:
+        query_plan, token_stream = await query_planner.stream_query(
+            question=request.question,
+            history=request.history,
+            custom_filter=request.filters,
+        )
+
         async def event_generator():
-            async for token in rag_service.stream_query(
-                query=request.question,
-                custom_filter=request.filters,
-            ):
+            # Notifica o cliente sobre a intenção identificada e pergunta clarificada
+            initial_meta = json.dumps({"plan": query_plan.model_dump()}, ensure_ascii=False)
+            yield f"data: {initial_meta}\n\n"
+
+            async for token in token_stream:
                 payload = json.dumps({"token": token}, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
             yield "data: [DONE]\n\n"
@@ -48,6 +57,7 @@ async def chat_stream(request: ChatRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro no streaming RAG: {str(exc)}",
         )
+
 
 
 @router.post("/search", response_model=SearchResponse, status_code=status.HTTP_200_OK)
