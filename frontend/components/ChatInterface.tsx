@@ -8,7 +8,7 @@ import React, {
   useState,
 } from 'react'
 import dynamic from 'next/dynamic'
-import MessageBubble from './MessageBubble'
+import MessageBubble, { type QueryPlanData } from './MessageBubble'
 import type { Source } from './SourcesPanel'
 import type { Filters } from './FilterPanel'
 
@@ -31,20 +31,30 @@ interface ChatMessage {
   isStreaming?: boolean
   latency?: number
   sources?: Source[]
+  queryPlan?: QueryPlanData
 }
 
 type ModeToggle = 'normal' | 'stream'
 
 // ─── Helpers (module-level, rerender-no-inline-components) ─────────────────
 
-function buildRequestBody(question: string, filters: Filters) {
+function buildRequestBody(question: string, filters: Filters, historyMessages: ChatMessage[] = []) {
   const activeFilters: Record<string, string> = {}
   if (filters.tenant) activeFilters.tenant = filters.tenant
   if (filters.audience) activeFilters.audience = filters.audience
   if (filters.plan) activeFilters.plan = filters.plan
 
+  const history = historyMessages
+    .filter((m) => m.content.trim().length > 0)
+    .slice(-6)
+    .map((m) => ({
+      role: m.role,
+      content: m.content,
+    }))
+
   return {
     question,
+    ...(history.length > 0 ? { history } : {}),
     ...(Object.keys(activeFilters).length > 0 ? { filters: activeFilters } : {}),
   }
 }
@@ -52,6 +62,7 @@ function buildRequestBody(question: string, filters: Filters) {
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10)
 }
+
 
 // ─── Empty state illustration ──────────────────────────────────────────────
 
@@ -128,7 +139,7 @@ export default function ChatInterface() {
 
   // ── Normal (non-streaming) send ──────────────────────────────────────────
   const sendNormal = useCallback(
-    async (question: string) => {
+    async (question: string, history: ChatMessage[]) => {
       const assistantId = generateId()
 
       // rerender-functional-setstate
@@ -140,7 +151,7 @@ export default function ChatInterface() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildRequestBody(question, filters)),
+        body: JSON.stringify(buildRequestBody(question, filters, history)),
         signal: abortRef.current?.signal,
       })
 
@@ -166,6 +177,7 @@ export default function ChatInterface() {
                 content: data.answer ?? '',
                 latency: data.latency_ms,
                 sources: data.sources ?? [],
+                queryPlan: data.query_plan ?? undefined,
               }
             : m,
         ),
@@ -176,7 +188,7 @@ export default function ChatInterface() {
 
   // ── Streaming send ───────────────────────────────────────────────────────
   const sendStream = useCallback(
-    async (question: string) => {
+    async (question: string, history: ChatMessage[]) => {
       const assistantId = generateId()
 
       setMessages((prev) => [
@@ -187,7 +199,7 @@ export default function ChatInterface() {
       const res = await fetch('/api/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildRequestBody(question, filters)),
+        body: JSON.stringify(buildRequestBody(question, filters, history)),
         signal: abortRef.current?.signal,
       })
 
@@ -233,7 +245,14 @@ export default function ChatInterface() {
             }
 
             try {
-              const parsed: { token?: string } = JSON.parse(payload)
+              const parsed: { token?: string; plan?: QueryPlanData } = JSON.parse(payload)
+              if (parsed.plan) {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId ? { ...m, queryPlan: parsed.plan } : m,
+                  ),
+                )
+              }
               if (parsed.token) {
                 setMessages((prev) =>
                   prev.map((m) =>
@@ -271,6 +290,7 @@ export default function ChatInterface() {
       abortRef.current?.abort()
       abortRef.current = new AbortController()
 
+      const currentHistory = [...messages]
       const userMsgId = generateId()
       // rerender-functional-setstate
       setMessages((prev) => [...prev, { id: userMsgId, role: 'user', content: question }])
@@ -279,9 +299,9 @@ export default function ChatInterface() {
 
       try {
         if (mode === 'stream') {
-          await sendStream(question)
+          await sendStream(question, currentHistory)
         } else {
-          await sendNormal(question)
+          await sendNormal(question, currentHistory)
         }
       } catch (err) {
         if ((err as Error).name !== 'AbortError') {
@@ -293,8 +313,9 @@ export default function ChatInterface() {
         inputRef.current?.focus()
       }
     },
-    [input, isLoading, mode, sendNormal, sendStream],
+    [input, isLoading, messages, mode, sendNormal, sendStream],
   )
+
 
   // Allow Shift+Enter for newlines, Enter to submit
   const handleKeyDown = useCallback(
@@ -363,7 +384,9 @@ export default function ChatInterface() {
                 isStreaming={msg.isStreaming}
                 latency={msg.latency}
                 sources={msg.sources}
+                queryPlan={msg.queryPlan}
               />
+
             ))
           )}
           <div ref={bottomRef} />
