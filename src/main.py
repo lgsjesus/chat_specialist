@@ -6,13 +6,21 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from src.controllers import api_router
+from src.controllers.router import api_router
 from src.infra.database import database
 from src.utils.create_database import enable_pgvector, test_connection
+
+
+# Configura saída do console para UTF-8 no Windows
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # Ajuste de event loop para Windows se necessário
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 
 
 @asynccontextmanager

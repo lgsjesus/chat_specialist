@@ -111,7 +111,7 @@ Extensão pgvector ativada com sucesso ou já existente!
 Inicie o servidor Uvicorn com hot-reload habilitado:
 
 ```powershell
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+python .\src\server.py 
 ```
 
 - **Documentação Interativa (Swagger)**: [http://localhost:8000/docs](http://localhost:8000/docs)
