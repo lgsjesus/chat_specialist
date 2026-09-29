@@ -13,6 +13,7 @@ API de atendimento corporativo e suporte especializado para telecomunicações (
 - **Modelos de IA**:
   - **Google Gemini** (Ativo): `gemini-2.5-flash` (Chat) e `gemini-embedding-001` (Embeddings)
   - **OpenAI** (Opcional): `gpt-4.1-mini` e `text-embedding-3-small`
+- **Frontend Web**: Next.js 15, React 19, TypeScript, Tailwind CSS (Design Minimalista Dark)
 - **Containerização**: Docker Compose
 
 ---
@@ -20,8 +21,9 @@ API de atendimento corporativo e suporte especializado para telecomunicações (
 ## 📋 Pré-requisitos
 
 1. **Python 3.12 ou superior** instalado.
-2. **Docker e Docker Compose** instalados e em execução.
-3. **Chave de API do Google Gemini** (`GOOGLE_API_KEY`) ou **OpenAI** (`OPENAI_API_KEY`).
+2. **Node.js 18+ e npm** instalados (para o front-end).
+3. **Docker e Docker Compose** instalados e em execução.
+4. **Chave de API do Google Gemini** (`GOOGLE_API_KEY`) ou **OpenAI** (`OPENAI_API_KEY`).
 
 ---
 
@@ -70,9 +72,6 @@ GOOGLE_EMBEDDING_MODEL=gemini-embedding-001
 
 # Configuração OpenAI (opcional)
 OPENAI_API_KEY=
-OPENAI_CHAT_MODEL=gpt-4.1-mini
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-```
 OPENAI_CHAT_MODEL=gpt-4.1-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 ```
@@ -284,11 +283,118 @@ curl -N -X POST "http://localhost:8000/api/v1/chat/stream" \
 
 ---
 
+## 💻 Frontend Web (Next.js & Tailwind CSS)
+
+O projeto conta com uma interface web moderna e minimalista para teste, validação e demonstração interativa do chat RAG em tempo real.
+
+### 🎨 Design Minimalista e Otimizações React
+
+- **Estética Monocromática Dark**: Interface limpa em tons de cinza (`bg-zinc-950`, superfícies `zinc-900`/`zinc-800`), sem bibliotecas pesadas de UI — estilizada com **Tailwind CSS puro**.
+- **Performance e Boas Práticas Vercel React** (seguindo o skill `@react`):
+  - `rerender-memo`: Componentes `MessageBubble` e `SourcesPanel` envolvidos em `React.memo` para evitar re-renderizações a cada token recebido.
+  - `bundle-dynamic-imports`: `FilterPanel` carregado dinamicamente com `next/dynamic` (`ssr: false`).
+  - `rerender-use-deferred-value`: `useDeferredValue` na lista de mensagens, mantendo a digitação no input ágil e responsiva.
+  - `rerender-functional-setstate`: Atualizações de estado funcionais `setMessages((prev) => ...)`.
+  - `rendering-conditional-render`: Uso de ternários em vez de `&&` para renderizações condicionais seguras.
+  - `async-suspense-boundaries`: `Suspense` boundary na página principal para streaming e hidratação eficiente.
+
+---
+
+### ✨ Recursos da Interface
+
+| Recurso | Descrição |
+|---|---|
+| **Modo Normal** | Envia a consulta e aguarda a resposta completa do backend. Exibe a latência em milissegundos (`latency_ms`) e as fontes recuperadas. |
+| **Modo Stream (SSE)** | Consome a rota de streaming do backend token a token em tempo real (`text/event-stream`), renderizando a resposta com efeito typewriter e cursor ativo. |
+| **Painel de Filtros** | Barra colapsável no topo com contador de filtros ativos:<ul><li>**Tenant**: texto livre (ex: `teletech`)</li><li>**Audience**: seletor entre `b2b`, `b2c`, `all` (ou sem filtro)</li><li>**Plan**: texto livre (ex: `enterprise`, `fibra_pro`)</li><li>Botão **Limpar filtros** para reset rápido</li></ul> |
+| **Painel de Fontes** | Accordion colapsável abaixo de respostas do assistente (`Ver fontes (N)`), detalhando título, tipo de documento e o trecho de contexto recuperado do pgvector. |
+| **Proxy Next.js Integrado** | Route Handlers em `/api/chat` e `/api/stream` que repassam as requisições para a API Python FastAPI (`http://localhost:8000`), evitando bloqueios de CORS e encapsulando o streaming. |
+
+---
+
+### 🚀 Como Executar o Frontend
+
+1. **Garantir que a API Backend está em execução**:
+   ```powershell
+   uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+2. **Entrar no diretório do frontend**:
+   ```powershell
+   cd frontend
+   ```
+
+3. **Instalar dependências (caso não tenham sido instaladas)**:
+   ```powershell
+   npm install
+   ```
+
+4. **Iniciar em modo de desenvolvimento**:
+   ```powershell
+   npm run dev
+   ```
+
+5. **Acessar no navegador**:
+   Abra [http://localhost:3000](http://localhost:3000)
+
+> **Nota de Configuração**: O arquivo `frontend/.env.local` já vem configurado por padrão apontando para `NEXT_PUBLIC_API_URL=http://localhost:8000`.
+
+---
+
+### 🧪 Cenários de Teste no Frontend
+
+#### Teste 1: Chat com Streaming em Tempo Real
+1. No canto superior direito da tela, clique no seletor de modo e escolha **Stream**.
+2. No campo de texto na parte inferior, digite:
+   > *"Quais são as velocidades e benefícios dos planos de fibra óptica?"*
+3. Pressione **Enter** ou clique no botão de envio (ícone de seta).
+4. **Comportamento esperado**: Os tokens aparecem progressivamente na tela com animação de digitação em tempo real.
+
+#### Teste 2: Chat Normal com Diagnóstico de Fontes e Latência
+1. No seletor de modo, alterne para **Normal**.
+2. Digite:
+   > *"Qual é o prazo de fidelidade e as regras de cancelamento sem multa?"*
+3. Pressione **Enter**.
+4. **Comportamento esperado**:
+   - A resposta completa é exibida acompanhada da latência de inferência (ex: `⏱ 1120ms`).
+   - Um botão `Ver fontes (X)` aparece no rodapé da resposta. Ao clicar, visualize os trechos recuperados do catálogo e a política de cancelamento.
+
+#### Teste 3: Consulta com Filtros de Metadados (Tenant, Audience, Plan)
+1. Clique em **Filtros** no topo da tela para expandir os campos opcionais.
+2. Preencha os campos desejados:
+   - **Tenant**: `teletech`
+   - **Audience**: Selecione `b2b`
+   - **Plan**: `enterprise`
+3. Observe que o badge ao lado de "Filtros" atualiza indicando a quantidade de filtros ativos (ex: `3`).
+4. Envie uma pergunta corporativa:
+   > *"Quais as condições e SLAs para clientes corporativos?"*
+5. **Comportamento esperado**: O backend aplica os filtros vetoriais na busca do pgvector, restringindo a recuperação aos documentos B2B/Enterprise da TeleTech.
+6. Clique no botão **Limpar filtros** para resetar os filtros a qualquer momento.
+
+---
+
 ## 📂 Estrutura do Projeto
 
 ```text
 chat_specialist/
 ├── .agents/                    # Agentes e personas especializadas
+├── frontend/                   # Interface Web Next.js (Minimalist Dark UI)
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── chat/route.ts   # Proxy para POST /api/v1/chat
+│   │   │   └── stream/route.ts # Proxy SSE para POST /api/v1/chat/stream
+│   │   ├── globals.css         # Tailwind + customização de scrollbar dark
+│   │   ├── layout.tsx          # Root Layout com fonte Inter e tema dark
+│   │   └── page.tsx            # Página principal com Suspense boundary
+│   ├── components/
+│   │   ├── ChatInterface.tsx   # Container principal de chat (normal + stream)
+│   │   ├── FilterPanel.tsx     # Painel de filtros retrátil (tenant, audience, plan)
+│   │   ├── MessageBubble.tsx   # Bolha de mensagem otimizada com React.memo
+│   │   └── SourcesPanel.tsx    # Accordion de fontes com React.memo
+│   ├── .env.local              # URL base da API backend (http://localhost:8000)
+│   ├── next.config.ts          # Configuração Next.js
+│   ├── package.json            # Scripts e dependências do frontend
+│   └── tailwind.config.ts      # Configuração do Tailwind CSS
 ├── knowledge_docs/             # Base de documentos oficiais da operadora (.md com frontmatter)
 ├── src/
 │   ├── controllers/            # Roteadores da API (chat, ingestão, health)
