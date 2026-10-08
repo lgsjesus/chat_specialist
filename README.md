@@ -13,6 +13,8 @@ API de atendimento corporativo e suporte especializado para telecomunicações (
 - **Modelos de IA**:
   - **Google Gemini** (Ativo): `gemini-2.5-flash` (Chat) e `gemini-embedding-001` (Embeddings)
   - **OpenAI** (Opcional): `gpt-4.1-mini` e `text-embedding-3-small`
+- **Query Planner**: etapa de LLM que identifica a intenção e reescreve a pergunta antes da busca vetorial
+- **Observabilidade**: OpenTelemetry (OTLP/HTTP) + Jaeger — traces com modelo, tokens, scores e latências
 - **Frontend Web**: Next.js 15, React 19, TypeScript, Tailwind CSS (Design Minimalista Dark)
 - **Containerização**: Docker Compose
 
@@ -74,6 +76,11 @@ GOOGLE_EMBEDDING_MODEL=gemini-embedding-001
 OPENAI_API_KEY=
 OPENAI_CHAT_MODEL=gpt-4.1-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+
+# Telemetria (obrigatórias)
+APP_ENV=development          # "production" ativa mascaramento de dados sensíveis nos spans
+TELEMETRY_TOOL=jaeger
+TELEMETRY_PORT=4318          # Porta OTLP/HTTP do Jaeger
 ```
 
 ---
@@ -85,7 +92,7 @@ OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 Inicie o contêiner do PostgreSQL com `pgvector`:
 
 ```powershell
-docker compose up -d
+docker compose --profile jaeger up -d --build
 ```
 
 Verifique se o contêiner está ativo com `docker ps`.
@@ -290,6 +297,41 @@ curl -N -X POST "http://localhost:8000/api/v1/chat/stream" \
 
 ---
 
+## 🔭 Observabilidade (OpenTelemetry + Jaeger)
+
+Cada requisição gera **um único trace** no Jaeger, com spans aninhados e eventos:
+
+```text
+http.chat | http.chat_stream | http.chat_search      (raiz)
+└── answer_query
+    ├── planner.plan
+    │   └── llm.call                 # modelo, tokens in/out/total, latência
+    ├── rag.search
+    │   ├── rag.embed_query          # modelo, dimensões, latência do embedding
+    │   └── rag.vector_query         # latência da consulta no pgvector
+    └── rag.generate / rag.generate_stream
+        └── llm.call                 # modelo, tokens, latência, tempo até o 1º token
+```
+
+| Dado | Onde aparece |
+|---|---|
+| Modelo chamado e tokens de entrada/saída/total | Atributos `llm.model`, `llm.usage.*` em cada `llm.call` |
+| Resultados da busca vetorial | Eventos `rag.chunk_retrieved` (rank, score, título, seção) no span `rag.search` |
+| Scores resumidos | `rag.score.best`, `rag.score.worst`, `rag.score.avg` |
+| Latências | `rag.embedding_latency_ms`, `rag.vector_query_latency_ms`, `llm.latency_ms`, `chat.total_latency_ms`, `chat.time_to_first_token_ms` (stream) |
+
+> **Nota:** o `score` do pgvector é **distância** (quanto menor, mais similar).
+
+**Como usar:**
+
+1. Suba o Jaeger: `docker compose --profile jaeger up -d`
+2. Defina no `.env`: `APP_ENV`, `TELEMETRY_TOOL` e `TELEMETRY_PORT=4318` (OTLP/HTTP).
+3. Faça uma chamada à API e abra a UI em [http://localhost:16686](http://localhost:16686) (serviço `rag-chat-specialist`, configurável via `TELEMETRY_SERVICE_NAME`).
+
+> Em `APP_ENV=production`, atributos com nomes sensíveis (`password`, `token`, `cpf`, `email`, ...) são mascarados. O armazenamento do Jaeger é em memória: os traces são perdidos ao reiniciar o container.
+
+---
+
 ## 💻 Frontend Web (Next.js & Tailwind CSS)
 
 O projeto conta com uma interface web moderna e minimalista para teste, validação e demonstração interativa do chat RAG em tempo real.
@@ -408,7 +450,8 @@ chat_specialist/
 │   │   ├── chat_controller.py
 │   │   ├── health_controller.py
 │   │   └── ingestion_controller.py
-│   ├── infra/                  # Conexão com banco e carregamento de configurações
+│   ├── infra/                  # Conexão com banco, fábrica de modelos e configurações
+│   │   ├── ai_factory.py       # Chat model e embeddings (Gemini/OpenAI)
 │   │   ├── config.py
 │   │   └── database.py
 │   ├── schemas/                # Schemas Pydantic de validação e I/O
@@ -416,11 +459,13 @@ chat_specialist/
 │   │   └── ingestion.py
 │   ├── services/               # Lógica de negócio e pipelines RAG (LCEL)
 │   │   ├── ingestion.py        # Splitter hierárquico e ingestão PGVector
+│   │   ├── query_planner.py    # Clarificação de intenção da pergunta via LLM
 │   │   └── rag_service.py      # Cadeia LangChain LCEL e busca vetorial
-│   ├── utils/                  # Scripts auxiliares e migração de banco
-│   │   └── create_database.py
+│   ├── utils/                  # Scripts auxiliares, migração de banco e telemetria
+│   │   ├── create_database.py
+│   │   └── telemetry.py        # OpenTelemetry (tracer, helpers e callback de LLM)
 │   └── main.py                 # Ponto de entrada FastAPI com lifespan e middlewares
-├── docker-compose.yml          # Container PostgreSQL com pgvector
+├── docker-compose.yml          # PostgreSQL com pgvector + Jaeger (profile `jaeger`)
 ├── requirements.txt            # Dependências Python
 └── README.md                   # Instruções de execução e documentação
 ```

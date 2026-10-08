@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   pgvector:
     image: pgvector/pgvector:pg16
@@ -13,5 +11,30 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  jaeger:
+    profiles:
+      - jaeger
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger-all-in-one
+    restart: unless-stopped
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    environment:
+      # O v2 requer a aceitação explícita de variáveis de ambiente para armazenamento local simples
+      - COLLECTOR_OTLP_ENABLED=true
+    command: [ "--query.ui-config=/etc/jaeger/ui-config.json" ]
+    volumes:
+      - jaeger-data:/badger
+      - ./jaeger-ui-config.json:/etc/jaeger/ui-config.json:ro
+    networks:
+      - jaeger-net
+
 volumes:
   pgdata:
+  jaeger-data:
+
+networks:
+  jaeger-net:
+    driver: bridge
