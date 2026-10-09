@@ -9,6 +9,15 @@ from src.infra.ai_factory import get_chat_model, get_collection_name, get_embedd
 from src.infra.config import settings
 from src.infra.database import database
 from src.schemas.chat import ChatMessage, ChatResponse, RetrievedChunk
+from src.utils.telemetry import (
+    LLMTelemetryCallback,
+    record_exception,
+    safe_add_event,
+    safe_set_attribute,
+    setup_telemetry,
+)
+
+tracer = setup_telemetry(__name__)
 
 SYSTEM_PROMPT = """Você é o Especialista Virtual da TeleTech Brasil, um assistente corporativo de suporte e consultoria de telecomunicações.
 Sua missão é fornecer respostas precisas, claras e amigáveis sobre os produtos, planos, coberturas, faturas, regras de suporte e políticas da TeleTech.
@@ -51,21 +60,72 @@ class RAGService:
         filter_dict: Optional[dict[str, Any]] = None,
     ) -> list[RetrievedChunk]:
         """Recupera os trechos mais relevantes do PGVector com métricas de distância/similaridade."""
-        results = await self.vector_store.asimilarity_search_with_score(
-            query=query,
-            k=top_k,
-            filter=filter_dict,
-        )
-        chunks: list[RetrievedChunk] = []
-        for doc, score in results:
-            chunks.append(
-                RetrievedChunk(
-                    content=doc.page_content,
-                    metadata=doc.metadata,
-                    score=round(float(score), 4),
-                )
-            )
-        return chunks
+        with tracer.start_as_current_span("rag.search") as span:
+            safe_set_attribute(span, "rag.collection", self.collection_name)
+            safe_set_attribute(span, "rag.top_k", top_k)
+            safe_set_attribute(span, "rag.filter", filter_dict)
+            safe_set_attribute(span, "rag.query", query)
+            t0 = time.perf_counter()
+            try:
+                # 1. Embedding da consulta (span próprio para isolar latência do provedor)
+                with tracer.start_as_current_span("rag.embed_query") as emb_span:
+                    safe_set_attribute(
+                        emb_span,
+                        "embedding.model",
+                        getattr(self.embeddings, "model", None),
+                    )
+                    t_emb = time.perf_counter()
+                    vector = await self.embeddings.aembed_query(query)
+                    emb_ms = round((time.perf_counter() - t_emb) * 1000.0, 2)
+                    safe_set_attribute(emb_span, "embedding.dimensions", len(vector))
+                    safe_set_attribute(emb_span, "embedding.latency_ms", emb_ms)
+
+                # 2. Consulta vetorial no pgvector
+                with tracer.start_as_current_span("rag.vector_query") as vq_span:
+                    t_q = time.perf_counter()
+                    results = await self.vector_store.asimilarity_search_with_score_by_vector(
+                        embedding=vector,
+                        k=top_k,
+                        filter=filter_dict,
+                    )
+                    q_ms = round((time.perf_counter() - t_q) * 1000.0, 2)
+                    safe_set_attribute(vq_span, "vector_query.latency_ms", q_ms)
+                    safe_set_attribute(vq_span, "vector_query.results", len(results))
+
+                chunks: list[RetrievedChunk] = []
+                for rank, (doc, score) in enumerate(results, 1):
+                    chunk = RetrievedChunk(
+                        content=doc.page_content,
+                        metadata=doc.metadata,
+                        score=round(float(score), 4),
+                    )
+                    chunks.append(chunk)
+                    # Evento por chunk (score = distância do pgvector: menor = mais similar)
+                    safe_add_event(span, "rag.chunk_retrieved", {
+                        "rank": rank,
+                        "score": chunk.score,
+                        "title": doc.metadata.get("title"),
+                        "doc_type": doc.metadata.get("doc_type"),
+                        "section": doc.metadata.get("h1") or doc.metadata.get("h2") or doc.metadata.get("section"),
+                        "content_chars": len(doc.page_content),
+                    })
+
+                total_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+                safe_set_attribute(span, "rag.results_count", len(chunks))
+                if chunks:
+                    scores = [c.score for c in chunks]
+                    safe_set_attribute(span, "rag.score.best", min(scores))
+                    safe_set_attribute(span, "rag.score.worst", max(scores))
+                    safe_set_attribute(span, "rag.score.avg", round(sum(scores) / len(scores), 4))
+                else:
+                    span.add_event("rag.no_results")
+                safe_set_attribute(span, "rag.embedding_latency_ms", emb_ms)
+                safe_set_attribute(span, "rag.vector_query_latency_ms", q_ms)
+                safe_set_attribute(span, "rag.latency_ms", total_ms)
+                return chunks
+            except Exception as exc:
+                record_exception(span, exc)
+                raise
 
     def _format_context(self, chunks: list[RetrievedChunk]) -> str:
         """Formata os chunks recuperados com delimitadores claros e metadados contextuais."""
@@ -118,11 +178,22 @@ class RAGService:
         history_msgs = self._format_history(history or [])
 
         # Execução da cadeia LCEL
-        answer = await self.chain.ainvoke({
-            "context": context_str,
-            "question": query,
-            "history": history_msgs,
-        })
+        with tracer.start_as_current_span("rag.generate") as gen_span:
+            safe_set_attribute(gen_span, "rag.context_chunks", len(chunks))
+            safe_set_attribute(gen_span, "rag.context_chars", len(context_str))
+            try:
+                answer = await self.chain.ainvoke(
+                    {
+                        "context": context_str,
+                        "question": query,
+                        "history": history_msgs,
+                    },
+                    config={"callbacks": [LLMTelemetryCallback("rag.generate")]},
+                )
+            except Exception as exc:
+                record_exception(gen_span, exc)
+                raise
+            safe_set_attribute(gen_span, "rag.answer_chars", len(answer))
 
         latency = (time.perf_counter() - start_time) * 1000.0
 
@@ -146,12 +217,29 @@ class RAGService:
         context_str = self._format_context(chunks)
         history_msgs = self._format_history(history or [])
 
-        async for token in self.chain.astream({
-            "context": context_str,
-            "question": query,
-            "history": history_msgs,
-        }):
-            yield token
+        # Span manual (sem anexar ao contexto): context managers não são seguros através de `yield`
+        gen_span = tracer.start_span("rag.generate_stream")
+        safe_set_attribute(gen_span, "rag.context_chunks", len(chunks))
+        safe_set_attribute(gen_span, "rag.context_chars", len(context_str))
+        n_tokens = 0
+        try:
+            async for token in self.chain.astream(
+                {
+                    "context": context_str,
+                    "question": query,
+                    "history": history_msgs,
+                },
+                config={"callbacks": [LLMTelemetryCallback("rag.generate_stream", parent=gen_span)]},
+            ):
+                n_tokens += 1
+                yield token
+        except Exception as exc:
+            record_exception(gen_span, exc)
+            raise
+        finally:
+            safe_set_attribute(gen_span, "rag.stream_chunks", n_tokens)
+            gen_span.end()
+
 
 
 rag_service = RAGService()

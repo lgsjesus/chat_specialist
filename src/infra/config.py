@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     OPENAI_CHAT_MODEL: str = "gpt-4.1-mini"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
 
+    #Telemetry
+    APP_ENV: str
+    TELEMETRY_TOOL: str
+    TELEMETRY_PORT: int = 4318
+    TELEMETRY_SERVICE_NAME: str = "rag-chat-specialist"
+
     @property
     def URL_DB(self) -> str:
         return str(

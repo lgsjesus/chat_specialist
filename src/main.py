@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from src.controllers.router import api_router
 from src.infra.database import database
 from src.utils.create_database import enable_pgvector, test_connection
+from src.utils.telemetry import shutdown_telemetry
 
 
 # Configura saída do console para UTF-8 no Windows
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI):
 
     print("\n🛑 Encerrando aplicação e liberando pools de conexão...")
     await database.engine.dispose()
+    shutdown_telemetry()
     print("✅ Recursos finalizados.")
 
 

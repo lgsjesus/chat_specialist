@@ -11,4 +11,6 @@ psycopg[binary]
 python-dotenv
 pydantic
 pydantic-settings
-PyYAML
+PyYAMLopentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
